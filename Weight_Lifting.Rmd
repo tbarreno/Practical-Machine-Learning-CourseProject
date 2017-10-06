@@ -1,0 +1,283 @@
+---
+title: "Practial Machine Learning Project"
+author: "Tinguaro Barreno"
+date: "27 de septiembre de 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library-load, echo=FALSE}
+# Library load
+library(caret)
+library(survival)
+library(randomForest)
+```
+
+## Summary
+
+The goal of this project is to predict the manner in which some participants
+did a weight lifting exercise by training and predicting
+over the "**Weight Lifting Exercises Dataset**" data.
+
+> *Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).*
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz4trw5SJMb
+
+### Goals
+
+You should create a report describing:
+
+  - How you built your model
+  - How you used cross validation
+  - What you think the expected out of sample error is
+  - And why you made the choices you did.
+
+You will also use your prediction model to predict 20 different test cases.
+
+
+#### Getting the data
+
+Let's get the data files to the local filesystem.
+
+```{r data-loading}
+# Loads (and download) the training data
+training_file = "pml-training.csv"
+
+if( ! file.exists( training_file ) )
+{
+  download.file( "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                 destfile = training_file )
+}
+training_orig <- read.csv( training_file )
+
+# Loads (and download) the testing data
+testing_file = "pml-testing.csv"
+
+if( ! file.exists( testing_file ) )
+{
+  download.file( "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                 destfile = testing_file )
+}
+testing_orig <- read.csv( testing_file )
+```
+
+#### Data cleaning
+
+In a quick view over the data sets (not shown due it's size),
+we could find that almost half of the variables doesn't
+have any data, so I will remove those variables from the data sets.
+
+```{r data-cleaning-1}
+training_selected <- training_orig[ , colSums(is.na(training_orig)) == 0 ]
+testing_selected  <- testing_orig[ , colSums(is.na(testing_orig)) == 0 ]
+```
+
+I will also remove the time stamps, windows, index and username columns because they're
+not relevant for the model training and prediction.
+
+```{r data-cleaning-2}
+training_selected <- subset(training_selected, 
+                            select = - c(new_window, num_window, X,
+                                         user_name,
+                                         raw_timestamp_part_1,
+                                         raw_timestamp_part_2,
+                                         cvtd_timestamp ) )
+testing_selected <- subset(testing_selected, 
+                            select = - c(new_window, num_window, X,
+                                         user_name,
+                                         raw_timestamp_part_1,
+                                         raw_timestamp_part_2,
+                                         cvtd_timestamp ) )
+```
+
+Finally, there are some columns in the training dataset with incomplete data
+(many observations with empty values): I will drop those columns because they're
+not present in the testing dataset.
+
+```{r data-cleaning-3}
+# First, count the number of "" values in all colums
+empty_values_by_column <- sapply(training_selected, function(x) sum( as.character(x) == "" ))
+
+# Get only column names with 0 emtpy values
+good_columns <- training_selected[ ,which(empty_values_by_column == 0) ]
+
+# Filter
+training_selected <- subset( training_selected, select=colnames( good_columns ) )
+```
+
+Now we have (almost) the same set of variables in the training and the testing dataset.
+The only difference is the `classe` variable that only applies to the training dataset
+and the `problem_id` in the testing dataset.
+
+
+#### Data Exploratory Analysis
+
+Let's forget the testing data set for now: it will be use for the "real" prediction.
+
+We have $`r nrow(training_selected)`$ observations in the training dataset. All the
+values are numeric (or integer) except the `classe` that is a Factor.
+
+
+#### Data preparation
+
+We will split the current training dataset in three: 70% of the data for training
+15% for cross-validation and 15% for testing.
+
+```{r dataset-split}
+# Split point
+partition_point <- createDataPartition(training_selected$classe, p=0.7)[[1]]
+
+# Training data set
+training_set <- training_selected[ partition_point, ]
+rest_set <- training_selected[ -partition_point, ]
+
+# Second split (CV/Testing)
+partition_point <- createDataPartition(rest_set$classe, p=0.5)[[1]]
+
+# New datasets
+cv_set <- rest_set[ partition_point, ]
+testing_set <- rest_set[ -partition_point, ]
+```
+
+#### Selecting the model
+
+```{r scope-cleaning, echo=FALSE}
+# Just cleaning scope variables (training_orig is 19Mb)
+rm( testing_orig, training_orig, partition_point,
+    training_selected, testing_selected, rest_set )
+```
+
+The `caret` packages contains about 
+
+```{r gbm-tunning}
+# https://topepo.github.io/caret/model-training-and-tuning.html
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           ## repeated ten times
+                           repeats = 10)
+
+gbm_model <- train(classe ~ ., data = training_set, 
+                   method = "gbm", 
+                   trControl = fitControl,
+                   verbose = FALSE)
+```
+
+
+#### Training the model
+
+```{r model-training}
+
+# Model training
+gbm_training_time <- system.time(
+  gbm_model <- train( classe ~ ., data=training_set, method = "gbm", verbose=FALSE ) )
+
+# Confusion matrix for the training set
+gbm_cm_training <- confusionMatrix( training_set$classe, predict( gbm_model, training_set ) )
+
+# Confusion matrix for the cross-validation set
+gbm_cm_testing <- confusionMatrix( cv_set$classe, predict( gbm_model, cv_set ) )
+
+print("Precision del entrenamiento sobre 'training'")
+gbm_cm_training$overall[["Accuracy"]]
+
+print("Precision del entrenamiento sobre 'testing'")
+gbm_cm_testing$overall[["Accuracy"]]
+
+```
+
+
+```{r gbm-model-training}
+
+# Pruebas
+p_list = c(0.01, 0.05, 0.1, 0.15, 0.20, 0.25)
+result_df = data.frame(
+  p = numeric(),
+  time = numeric(),
+  train_accuracy = numeric(),
+  test_accuracy = numeric()
+)
+
+idx = 1
+for( p in p_list )
+{
+  print(paste( "Point : ", p ) )
+
+  # Partimos los datos
+  partition_point <- createDataPartition(training_selected$classe, p=p)[[1]]
+
+  training_set <- training_selected[ partition_point, ]
+  cv_set <- training_selected[ -partition_point, ]
+  
+  # Entrenar el modelo
+  training_time <- system.time( 
+    model <- train( classe ~ ., data=training_set, method = "gbm", verbose=FALSE ) )
+  
+  # Predicción sobre el juego de datos de entrenamiento
+  cm_training <- confusionMatrix( training_set$classe, predict( model, training_set ) )
+  
+  # Predicción sobre el modelo de datos de validación
+  cm_testing <- confusionMatrix( cv_set$classe, predict( model, cv_set ) )
+  
+  # Guardamos los valores para compararlos
+  result_df[ idx, "p"] = p
+  result_df[ idx, "time" ] = training_time[[3]]
+  result_df[ idx, "train_accuracy" ] = cm_training$overall[["Accuracy"]]
+  result_df[ idx, "test_accuracy" ] = cm_testing$overall[["Accuracy"]]
+  
+  idx = idx + 1
+}
+```
+
+```{r x}
+ggplot( time ~ p, data=result_df, aes() ) +
+  geom_line()
+```
+
+
+## Neural Network
+```{r nnet-model-training}
+# mlp_grid = expand.grid(layer1 = 10, layer2 = 10, layer3 = 10)
+# system.time( model_nnet <- train( classe ~ ., data=training_set,
+#                                   method = "mlpML", verbose=FALSE,
+#                                   tuneGrid = mlp_grid) )
+
+# Entrenar el modelo
+system.time( model_nnet <- train( classe ~ ., data=training_set,
+                                  method = "nnet", verbose=FALSE, size=8) )
+
+# Predicción sobre el juego de datos de entrenamiento
+nnet_cm_training <- confusionMatrix( training_set$classe, predict( model_nnet, training_set ) )
+
+# Predicción sobre el modelo de datos de validación
+nnet_cm_testing <- confusionMatrix( cv_set$classe, predict( model_nnet, cv_set ) )
+
+print("Precision del entrenamiento sobre 'training'")
+nnet_cm_training$overall[["Accuracy"]]
+
+print("Precision del entrenamiento sobre 'testing'")
+nnet_cm_testing$overall[["Accuracy"]]
+
+```
+
+## Model comparison
+
+Model  |  Training accuracy  |  Testing accuracy
+-------|---------------------|------------------
+Random Forest | $`r rf_cm_training$overall[["Accuracy"]]`$  | $`r rf_cm_testing$overall[["Accuracy"]]`$
+GBM           | $`r gbm_cm_training$overall[["Accuracy"]]`$ | $`r gbm_cm_testing$overall[["Accuracy"]]`$
+
+
+## Test Prediction
+
+```{r prediction}
+# Predicción con RF
+predict( model_rf, testing_selected )
+
+# Predicción con GBM
+predict( model_gbm, testing_selected )
+```
