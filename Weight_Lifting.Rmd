@@ -150,10 +150,55 @@ rm( testing_orig, training_orig, partition_point,
     training_selected, testing_selected, rest_set )
 ```
 
-The `caret` packages contains about 
+The `caret` packages contains more than 200 models. Following [an interesting article](https://machinelearningmastery.com/compare-models-and-select-the-best-using-the-caret-r-package/)
+about comparing models, I will train three models and compare the results:
 
 ```{r gbm-tunning}
+# Prepare training scheme
+control <- trainControl( method="repeatedcv", number=10, repeats=3 )
+
+# train the LVQ model
+set.seed(7)
+time_lvq <- system.time(
+  model_lvq <- train(classe ~ .,
+                     data=training_set,
+                     method="lvq",
+                     trControl=control) )
+
+# train the GBM model
+set.seed(7)
+gbm_time <- system.time( 
+  model_gbm <- train(classe ~ ., 
+                     data=training_set, 
+                     method="gbm", 
+                     trControl=control, 
+                     verbose=FALSE) )
+
+# train the SVM model
+set.seed(7)
+time_svm <- system.time(
+  model_svm <- train(classe ~ .,
+                     data=training_set,
+                     method="svmRadial",
+                     trControl=control) )
+
+# collect resamples
+results <- resamples( list( LVQ=model_lvq, GBM=model_gbm, SVM=model_svm ) )
+
+# summarize the distributions
+summary(results)
+# boxplots of results
+bwplot(results)
+# dot plots of results
+dotplot(results)
+```
+
+
+#### Training the model
+
+```{r model-training}
 # https://topepo.github.io/caret/model-training-and-tuning.html
+
 
 fitControl <- trainControl(## 10-fold CV
                            method = "repeatedcv",
@@ -165,12 +210,7 @@ gbm_model <- train(classe ~ ., data = training_set,
                    method = "gbm", 
                    trControl = fitControl,
                    verbose = FALSE)
-```
 
-
-#### Training the model
-
-```{r model-training}
 
 # Model training
 gbm_training_time <- system.time(
