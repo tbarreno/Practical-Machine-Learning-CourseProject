@@ -14,6 +14,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(caret)
 library(survival)
 library(randomForest)
+library(mlbench)
 ```
 
 ## Summary
@@ -146,178 +147,127 @@ testing_set <- rest_set[ -partition_point, ]
 
 ```{r scope-cleaning, echo=FALSE}
 # Just cleaning scope variables (training_orig is 19Mb)
-rm( testing_orig, training_orig, partition_point,
-    training_selected, testing_selected, rest_set )
+rm( testing_orig, training_orig, partition_point, good_columns,
+    training_selected, testing_selected, rest_set, empty_values_by_column )
 ```
 
-The `caret` packages contains more than 200 models. Following [an interesting article](https://machinelearningmastery.com/compare-models-and-select-the-best-using-the-caret-r-package/)
-about comparing models, I will train three models and compare the results:
+The `caret` packages contains
+[more than 200 models](https://topepo.github.io/caret/available-models.html)
+for machine learning, and there isn't any *rule of thumb* for
+choosing the best model at first glance.
+
+My first training attempt with this project was to train the raw data set
+with the *Random Forest* (`rf`) method. It ran out of memory several times even with
+a reduced data set (about 2,000 observations) in a desktop computer with 4Gb.
+I also tried the *Neural Network* method (`nnet`) with better memory efficiency
+but it showed a poor performance (innaccuracy). And finally the 
+*Gradient Boosted Machine* (`gbm`) that seemed to me the most balanced method.
+
+Then, I cleaned the data set, and following [an interesting article](https://machinelearningmastery.com/compare-models-and-select-the-best-using-the-caret-r-package/)
+about comparing models, I will train three models and compare the results.
 
 ```{r gbm-tunning}
 # Prepare training scheme
-control <- trainControl( method="repeatedcv", number=10, repeats=3 )
+control <- trainControl( method="repeatedcv", number=10, repeats=3, classProbs=TRUE )
 
-# train the LVQ model
+# Train the LVQ model
 set.seed(7)
 time_lvq <- system.time(
   model_lvq <- train(classe ~ .,
-                     data=training_set,
-                     method="lvq",
-                     trControl=control) )
+                     data = training_set,
+                     method = "lvq",
+                     trControl = control) )
 
 # train the GBM model
 set.seed(7)
-gbm_time <- system.time( 
+time_gbm <- system.time( 
   model_gbm <- train(classe ~ ., 
-                     data=training_set, 
-                     method="gbm", 
-                     trControl=control, 
-                     verbose=FALSE) )
+                     data = training_set, 
+                     method = "gbm", 
+                     trControl = control, 
+                     verbose = FALSE) )
 
 # train the SVM model
 set.seed(7)
 time_svm <- system.time(
   model_svm <- train(classe ~ .,
-                     data=training_set,
-                     method="svmRadial",
-                     trControl=control) )
+                     data = training_set,
+                     method = "svmRadial",
+                     trControl = control) )
+```
 
+There is a noteworthy difference in training times between the models:
+for example, the *SVM* model training lasted for more than 2 hours while
+the *GBM* ran for just 20 minutes.
+
+```{r time-table}
+# Just a elapsed-time and object size table
+time_table <- matrix( c(time_lvq[3], object.size(model_lvq),
+                        time_gbm[3], object.size(model_gbm),
+                        time_svm[3], object.size(model_svm) ),
+                      ncol=2, byrow=TRUE )
+
+# Units: time in minutes and sizes in Mb
+time_table[,1] <- time_table[,1] / 60
+time_table[,2] <- time_table[,2] / (1024 * 1024)
+
+rownames( time_table ) <- c( "LVQ", "GBM", "SVM" )
+colnames( time_table ) <- c( "Elapsed time (mins.)", "Object size (Mb)" )
+
+# Show the table
+time_table
+```
+
+Looking at the model accuracy, the best model is **GBM**. It's accuracy and
+Kappa values over the training set are about 95%.
+
+```{r comparison-summary}
 # collect resamples
 results <- resamples( list( LVQ=model_lvq, GBM=model_gbm, SVM=model_svm ) )
 
 # summarize the distributions
 summary(results)
-# boxplots of results
+```
+
+```{r comparison-plots}
+# Boxplots of results
 bwplot(results)
-# dot plots of results
-dotplot(results)
 ```
 
 
-#### Training the model
-
-```{r model-training}
-# https://topepo.github.io/caret/model-training-and-tuning.html
+Now let's evaluate the prediction accuracy for the testing set.
 
 
-fitControl <- trainControl(## 10-fold CV
-                           method = "repeatedcv",
-                           number = 10,
-                           ## repeated ten times
-                           repeats = 10)
+```{r model-predictions}
+# Prediction
+prediction_lvq <- predict( model_lvq, testing_set )
+prediction_gbm <- predict( model_gbm, testing_set )
+prediction_svm <- predict( model_svm, testing_set )
 
-gbm_model <- train(classe ~ ., data = training_set, 
-                   method = "gbm", 
-                   trControl = fitControl,
-                   verbose = FALSE)
+# Confusion matrix
+cm_lvq <- confusionMatrix( testing_set$classe, prediction_lvq )
+cm_gbm <- confusionMatrix( testing_set$classe, prediction_gbm )
+cm_svm <- confusionMatrix( testing_set$classe, prediction_svm )
 
 
-# Model training
-gbm_training_time <- system.time(
-  gbm_model <- train( classe ~ ., data=training_set, method = "gbm", verbose=FALSE ) )
+cm_table <- matrix( c(cm_lvq$overall[["Accuracy"]], cm_lvq$overall[["Kappa"]],
+                      cm_gbm$overall[["Accuracy"]], cm_gbm$overall[["Kappa"]],
+                      cm_svm$overall[["Accuracy"]], cm_svm$overall[["Kappa"]] ),
+                      ncol=2, byrow=TRUE )
 
-# Confusion matrix for the training set
-gbm_cm_training <- confusionMatrix( training_set$classe, predict( gbm_model, training_set ) )
+rownames( cm_table ) <- c( "LVQ", "GBM", "SVM" )
+colnames( cm_table ) <- c( "Accuracy", "Kappa" )
 
-# Confusion matrix for the cross-validation set
-gbm_cm_testing <- confusionMatrix( cv_set$classe, predict( gbm_model, cv_set ) )
-
-print("Precision del entrenamiento sobre 'training'")
-gbm_cm_training$overall[["Accuracy"]]
-
-print("Precision del entrenamiento sobre 'testing'")
-gbm_cm_testing$overall[["Accuracy"]]
-
+# Show the table
+cm_table
 ```
 
-
-```{r gbm-model-training}
-
-# Pruebas
-p_list = c(0.01, 0.05, 0.1, 0.15, 0.20, 0.25)
-result_df = data.frame(
-  p = numeric(),
-  time = numeric(),
-  train_accuracy = numeric(),
-  test_accuracy = numeric()
-)
-
-idx = 1
-for( p in p_list )
-{
-  print(paste( "Point : ", p ) )
-
-  # Partimos los datos
-  partition_point <- createDataPartition(training_selected$classe, p=p)[[1]]
-
-  training_set <- training_selected[ partition_point, ]
-  cv_set <- training_selected[ -partition_point, ]
-  
-  # Entrenar el modelo
-  training_time <- system.time( 
-    model <- train( classe ~ ., data=training_set, method = "gbm", verbose=FALSE ) )
-  
-  # Predicción sobre el juego de datos de entrenamiento
-  cm_training <- confusionMatrix( training_set$classe, predict( model, training_set ) )
-  
-  # Predicción sobre el modelo de datos de validación
-  cm_testing <- confusionMatrix( cv_set$classe, predict( model, cv_set ) )
-  
-  # Guardamos los valores para compararlos
-  result_df[ idx, "p"] = p
-  result_df[ idx, "time" ] = training_time[[3]]
-  result_df[ idx, "train_accuracy" ] = cm_training$overall[["Accuracy"]]
-  result_df[ idx, "test_accuracy" ] = cm_testing$overall[["Accuracy"]]
-  
-  idx = idx + 1
-}
-```
-
-```{r x}
-ggplot( time ~ p, data=result_df, aes() ) +
-  geom_line()
-```
-
-
-## Neural Network
-```{r nnet-model-training}
-# mlp_grid = expand.grid(layer1 = 10, layer2 = 10, layer3 = 10)
-# system.time( model_nnet <- train( classe ~ ., data=training_set,
-#                                   method = "mlpML", verbose=FALSE,
-#                                   tuneGrid = mlp_grid) )
-
-# Entrenar el modelo
-system.time( model_nnet <- train( classe ~ ., data=training_set,
-                                  method = "nnet", verbose=FALSE, size=8) )
-
-# Predicción sobre el juego de datos de entrenamiento
-nnet_cm_training <- confusionMatrix( training_set$classe, predict( model_nnet, training_set ) )
-
-# Predicción sobre el modelo de datos de validación
-nnet_cm_testing <- confusionMatrix( cv_set$classe, predict( model_nnet, cv_set ) )
-
-print("Precision del entrenamiento sobre 'training'")
-nnet_cm_training$overall[["Accuracy"]]
-
-print("Precision del entrenamiento sobre 'testing'")
-nnet_cm_testing$overall[["Accuracy"]]
-
-```
-
-## Model comparison
-
-Model  |  Training accuracy  |  Testing accuracy
--------|---------------------|------------------
-Random Forest | $`r rf_cm_training$overall[["Accuracy"]]`$  | $`r rf_cm_testing$overall[["Accuracy"]]`$
-GBM           | $`r gbm_cm_training$overall[["Accuracy"]]`$ | $`r gbm_cm_testing$overall[["Accuracy"]]`$
-
+Again, the best model is the **GBM** with an expected error about 5%.
 
 ## Test Prediction
 
 ```{r prediction}
-# Predicción con RF
-predict( model_rf, testing_selected )
-
 # Predicción con GBM
+# predictedProbs <- predict(model_svm, newdata = testing_set , type = "prob")
 predict( model_gbm, testing_selected )
 ```
