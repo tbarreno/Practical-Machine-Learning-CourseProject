@@ -9,7 +9,7 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-```{r library-load, echo=FALSE}
+```{r library-load, echo=FALSE, cache=TRUE, warning=FALSE, message=FALSE}
 # Library load
 library(caret)
 library(survival)
@@ -43,7 +43,7 @@ You will also use your prediction model to predict 20 different test cases.
 
 Let's get the data files to the local filesystem.
 
-```{r data-loading}
+```{r data-loading, cache=TRUE}
 # Loads (and download) the training data
 training_file = "pml-training.csv"
 
@@ -71,7 +71,7 @@ In a quick view over the data sets (not shown due it's size),
 we could find that almost half of the variables doesn't
 have any data, so I will remove those variables from the data sets.
 
-```{r data-cleaning-1}
+```{r data-cleaning-1, cache=TRUE}
 training_selected <- training_orig[ , colSums(is.na(training_orig)) == 0 ]
 testing_selected  <- testing_orig[ , colSums(is.na(testing_orig)) == 0 ]
 ```
@@ -79,7 +79,7 @@ testing_selected  <- testing_orig[ , colSums(is.na(testing_orig)) == 0 ]
 I will also remove the time stamps, windows, index and username columns because they're
 not relevant for the model training and prediction.
 
-```{r data-cleaning-2}
+```{r data-cleaning-2, cache=TRUE}
 training_selected <- subset(training_selected, 
                             select = - c(new_window, num_window, X,
                                          user_name,
@@ -98,7 +98,7 @@ Finally, there are some columns in the training dataset with incomplete data
 (many observations with empty values): I will drop those columns because they're
 not present in the testing dataset.
 
-```{r data-cleaning-3}
+```{r data-cleaning-3, cache=TRUE}
 # First, count the number of "" values in all colums
 empty_values_by_column <- sapply(training_selected, function(x) sum( as.character(x) == "" ))
 
@@ -127,7 +127,7 @@ values are numeric (or integer) except the `classe` that is a Factor.
 We will split the current training dataset in three: 70% of the data for training
 15% for cross-validation and 15% for testing.
 
-```{r dataset-split}
+```{r dataset-split, cache=TRUE}
 # Split point
 partition_point <- createDataPartition(training_selected$classe, p=0.7)[[1]]
 
@@ -145,10 +145,10 @@ testing_set <- rest_set[ -partition_point, ]
 
 #### Selecting the model
 
-```{r scope-cleaning, echo=FALSE}
+```{r scope-cleaning, echo=FALSE, cache=TRUE}
 # Just cleaning scope variables (training_orig is 19Mb)
 rm( testing_orig, training_orig, partition_point, good_columns,
-    training_selected, testing_selected, rest_set, empty_values_by_column )
+    training_selected, rest_set, empty_values_by_column )
 ```
 
 The `caret` packages contains
@@ -166,10 +166,12 @@ but it showed a poor performance (innaccuracy). And finally the
 Then, I cleaned the data set, and following [an interesting article](https://machinelearningmastery.com/compare-models-and-select-the-best-using-the-caret-r-package/)
 about comparing models, I will train three models and compare the results.
 
-```{r gbm-tunning}
+```{r train-control, cache=TRUE}
 # Prepare training scheme
-control <- trainControl( method="repeatedcv", number=10, repeats=3, classProbs=TRUE )
+control <- trainControl( method="repeatedcv", number=10, repeats=3 )
+```
 
+```{r training-lvq, cache=TRUE}
 # Train the LVQ model
 set.seed(7)
 time_lvq <- system.time(
@@ -177,8 +179,10 @@ time_lvq <- system.time(
                      data = training_set,
                      method = "lvq",
                      trControl = control) )
+```
 
-# train the GBM model
+```{r training-gbm, cache=TRUE}
+# Train the GBM model
 set.seed(7)
 time_gbm <- system.time( 
   model_gbm <- train(classe ~ ., 
@@ -186,8 +190,10 @@ time_gbm <- system.time(
                      method = "gbm", 
                      trControl = control, 
                      verbose = FALSE) )
+```
 
-# train the SVM model
+```{r training-svm, cache=TRUE}
+# Train the SVM model
 set.seed(7)
 time_svm <- system.time(
   model_svm <- train(classe ~ .,
@@ -200,7 +206,7 @@ There is a noteworthy difference in training times between the models:
 for example, the *SVM* model training lasted for more than 2 hours while
 the *GBM* ran for just 20 minutes.
 
-```{r time-table}
+```{r time-table, cache=TRUE}
 # Just a elapsed-time and object size table
 time_table <- matrix( c(time_lvq[3], object.size(model_lvq),
                         time_gbm[3], object.size(model_gbm),
@@ -238,7 +244,7 @@ bwplot(results)
 Now let's evaluate the prediction accuracy for the testing set.
 
 
-```{r model-predictions}
+```{r model-predictions, cache=TRUE}
 # Prediction
 prediction_lvq <- predict( model_lvq, testing_set )
 prediction_gbm <- predict( model_gbm, testing_set )
@@ -264,10 +270,6 @@ cm_table
 
 Again, the best model is the **GBM** with an expected error about 5%.
 
-## Test Prediction
-
-```{r prediction}
-# Predicción con GBM
-# predictedProbs <- predict(model_svm, newdata = testing_set , type = "prob")
-predict( model_gbm, testing_selected )
-```
+Now we can run the prediction over the `testing` values 
+with `predict( model_gbm, testing_selected )` (I omit this execution
+because this document shouldn't show the prediction results).
